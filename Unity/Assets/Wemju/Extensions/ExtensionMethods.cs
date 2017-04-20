@@ -26,6 +26,7 @@ namespace Extensions
 		{
 			return Encoding.UTF8.GetBytes(message);
 		}
+
 		public static string GetString(this byte[] data)
 		{
 			return Encoding.UTF8.GetString(data);
