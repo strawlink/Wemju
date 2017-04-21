@@ -15,17 +15,8 @@ namespace Wemju.Console
 	{
 		static IngameConsole()
 		{
-//			RegisterMethod(Method.CFG_LOAD, StartLoadConfig);
-//			RegisterMethod(Method.CFG_SAVE, StartSaveConfig);
-//			RegisterMethod(Method.CFG_PATH, EchoConfigPath);
-//			RegisterMethodWithParams(Method.SET, SetVariable);
-//			RegisterMethodWithParams(Method.GET, GetVariable);
-
-//			RegisterMethodWithParams(Method.BIND, BindKey);
-
 			LoadAllMethods();
 			StartLoadConfig();
-			//LoadConfig();
 		}
 
 		private static void LoadAllMethods()
@@ -34,23 +25,63 @@ namespace Wemju.Console
 			var assembly = Assembly.GetAssembly(type);
 			var allTypes = assembly.GetTypes();
 			var allMethods = allTypes.SelectMany(x => x.GetMethods()).Where(y => y.GetCustomAttributes(typeof(ConsoleMethod), false).Length > 0);
+			var allCvars = allTypes.SelectMany(x => x.GetFields()).Where(y => y.GetCustomAttributes(typeof(Cvar), false).Length > 0);
+			var allCvarOnChange = allTypes.SelectMany(x => x.GetMethods()).Where(y => y.GetCustomAttributes(typeof(CvarOnChange), false).Length > 0);
 
 			foreach (var info in allMethods)
 			{
-				var attr = info.GetCustomAttributes(typeof(ConsoleMethod), false);
+				if (!info.IsStatic)
+				{
+					Debug.LogError("Unable to access non-static method \"" + info.Name + "\"");
+					continue;
+				}
 
-				//info.GetParameters()
-				//_methodCollection.Add(, Delegate.CreateDelegate(typeof(Action<string[]>),info));
-				var cName = ((ConsoleMethod) attr[0]).command;
+				var attr = info.GetCustomAttributes(typeof(ConsoleMethod), false)[0];
+				var cName = ((ConsoleMethod) attr).command;
 				_newMethodCollection.Add(cName, info);
-				//Debug.Log("Found method with name: " + cName);
 			}
 
-			//Debug.Log("AllMethod count: " + allMethods.Count());
+			foreach (var info in allCvars)
+			{
+				if (!info.IsStatic)
+				{
+					Debug.LogError("Unable to access non-static field \"" + info.Name + "\"");
+					continue;
+				}
+
+				var attr = info.GetCustomAttributes(typeof(Cvar), false)[0];
+				var cvarAttr = ((Cvar) attr);
+
+				// TODO: This style doesn't really make sense, we want to modify the direct variable instead of wrapping it
+				Variable newVar = new Variable(cvarAttr.defaultValue);
+				_variableCollection.Add(cvarAttr.command, newVar);
+			}
+
+			foreach (var info in allCvarOnChange)
+			{
+				if (!info.IsStatic)
+				{
+					Debug.LogError("Unable to access non-static method \"" + info.Name + "\"");
+					continue;
+				}
+
+				var attr = info.GetCustomAttributes(typeof(CvarOnChange), false)[0];
+				var cName = ((CvarOnChange) attr).command;
+
+				Variable newVar;
+				if (_variableCollection.TryGetValue(cName, out newVar))
+				{
+					var info1 = info;
+					newVar.OnChange += (val) => info1.Invoke(null, new[] {val});
+				}
+				else
+				{
+					Debug.LogError("Unable to add OnChange listener; variable \"" + cName + "\" not found");
+				}
+			}
 		}
 
 		private static Dictionary<string, MethodInfo> _newMethodCollection = new Dictionary<string, MethodInfo>();
-
 
 		private const char SPLIT_INPUT_CHARACTER = ' ';
 		public static void InvokeNewStyle(string input)
@@ -71,12 +102,6 @@ namespace Wemju.Console
 				try
 				{
 					object target = null;
-					if (!info.IsStatic)
-					{
-						Debug.LogError("Unable to invoke non-static method");
-						return;
-						//target= info.
-					}
 
 					// Remove the call to the method
 					commands.RemoveAt(0);
@@ -263,7 +288,7 @@ namespace Wemju.Console
 			}
 		}
 
-		public class Variable<T>
+		/*public class Variable<T>
 		{
 			public Variable(T defaultValue)
 			{
@@ -297,34 +322,27 @@ namespace Wemju.Console
 			{
 				return value;
 			}
-		}
+		}*/
 
-		//private const string PATH_TO_CONFIG = "C:\\Data\\config.cfg";
-
-		private static string PATH_TO_CONFIG
+		private static string GetPathToConfig
 		{
 			get { return Path.Combine(Environment.CurrentDirectory, "wemjuconfig.cfg"); }
 		}
 
 		private static bool _isDirty = false;
 
-		private static Dictionary<string, Variable> _variableCollection = new Dictionary<string, Variable>
-		{
-			{Command.SETTINGS_NAME, new Variable("defaultName1")},
-			{Command.SETTINGS_MAXFPS, new Variable(123)},
-			{Command.SETTINGS_SENSITIVITY, new Variable(0.25f)},
-		};
+		private static Dictionary<string, Variable> _variableCollection = new Dictionary<string, Variable>();
 
-		public static Variable GetVar(string key)
-		{
-			Variable obj;
-			if (_variableCollection.TryGetValue(key, out obj))
-			{
-				return obj;
-			}
-
-			return null;
-		}
+//		public static Variable GetVar(string key)
+//		{
+//			Variable obj;
+//			if (_variableCollection.TryGetValue(key, out obj))
+//			{
+//				return obj;
+//			}
+//
+//			return null;
+//		}
 //		public static T GetVar<T>(string key, T defaultValue = default(T))
 //		{
 //			Variable obj;
@@ -347,14 +365,14 @@ namespace Wemju.Console
 //			return default(T);
 //		}
 
-		public static void SetVar<T>(string name, T val)
-		{
-			_variableCollection[name].value = val;
-
-			_isDirty = true;
-
-			SaveConfig();
-		}
+//		public static void SetVar<T>(string name, T val)
+//		{
+//			_variableCollection[name].value = val;
+//
+//			_isDirty = true;
+//
+//			SaveConfig();
+//		}
 
 //		public static void RegisterVar<T>(string name, T defaultValue, Action<object> onChange = null)
 //		{
@@ -365,22 +383,24 @@ namespace Wemju.Console
 		{
 			return _newMethodCollection.Keys;
 		}
+		public static IEnumerable<string> GetAllVariables()
+		{
+			return _variableCollection.Keys;
+		}
 
-		//private static Dictionary<string, Action<string[]>> _methodCollection = new Dictionary<string, Action<string[]>>();
+		[Cvar(Command.CFG_AUTO_SAVE, false)]
+		public static bool _cfgAutoSave = false;
 
-//		public static void RegisterMethodWithParams(string name, Action<string[]> method)
-//		{
-//			_methodCollection[name] = method;
-//		}
-//		public static void RegisterMethod(string name, Action method)
-//		{
-//			_methodCollection[name] = (input) => method();
-//		}
+		[CvarOnChange(Command.CFG_AUTO_SAVE)]
+		public static void CfgAutoSaveOnChange(bool state)
+		{
+			_cfgAutoSave = state;
+		}
 
 		[ConsoleMethod(Method.CFG_PATH)]
 		public static void EchoConfigPath()
 		{
-			ConsoleHelper.AddLogToHistory(PATH_TO_CONFIG);
+			ConsoleHelper.AddLogToHistory(GetPathToConfig);
 		}
 
 		[ConsoleMethod(Method.CFG_SAVE)]
@@ -392,33 +412,39 @@ namespace Wemju.Console
 			};
 			thread.Start();
 		}
-		public static void SaveConfig()
+		private static void SaveConfig()
 		{
-			Debug.Log("SaveConfig");
 			if (!_isDirty)
 			{
-				Debug.Log("Nothing was changed");
+				ConsoleHelper.AddLogToHistory("Attempted to save, but no changes were detected");
 				return;
 			}
 
-
 			lock (_keyBindings)
 			{
-				var lines = new string[_keyBindings.Count];
-
-				int i = 0;
-				foreach (var binding in _keyBindings)
+				using (var writer = new StreamWriter(GetPathToConfig))
 				{
-					lines[i] = Method.BIND + " " + binding.Key.ToString() + " " + binding.Value;
-					i++;
+					foreach (var binding in _keyBindings)
+					{
+						writer.WriteLine(Method.BIND + " " + binding.Key.ToString() + " " + binding.Value);
+					}
+
+					foreach (var variable in _variableCollection)
+					{
+						writer.WriteLine(Method.SET + " " + variable.Key + " " + variable.Value.value);
+					}
 				}
 
-				File.WriteAllLines(PATH_TO_CONFIG, lines);
 				_isDirty = false;
 			}
 
-			Debug.Log("Saved");
+			if (!_cfgAutoSave)
+			{
+				ConsoleHelper.AddLogToHistory("Saved config");
+			}
 		}
+
+		private static bool _isLoadingConfig = false;
 
 		[ConsoleMethod(Method.CFG_LOAD)]
 		public static void StartLoadConfig()
@@ -432,10 +458,11 @@ namespace Wemju.Console
 
 		private static void LoadConfig()
 		{
+			_isLoadingConfig = true;
 			Debug.Log("LoadConfig");
-			if (File.Exists(PATH_TO_CONFIG))
+			if (File.Exists(GetPathToConfig))
 			{
-				var lines = File.ReadAllLines(PATH_TO_CONFIG);
+				var lines = File.ReadAllLines(GetPathToConfig);
 				lock (_keyBindings)
 				{
 					_keyBindings.Clear();
@@ -450,6 +477,7 @@ namespace Wemju.Console
 			{
 				SetDefaultBindings();
 			}
+			_isLoadingConfig = false;
 		}
 
 		private static void SetDefaultBindings()
@@ -468,126 +496,6 @@ namespace Wemju.Console
 			StartSaveConfig();
 		}
 
-		public static void ExecuteCommand(string input)
-		{
-//			//Debug.Log("ExecuteCommand: " + input);
-//			ConsoleHelper.AddLogToHistory(">" + input);
-//			var commands = new List<string>(input.Split(' '));
-//
-//			if (commands.Count == 0)
-//				return;
-//
-//			var key = commands[0];
-//
-//			Action<string[]> method;
-//			if (_methodCollection.TryGetValue(key, out method))
-//			{
-//				var args = commands.Count > 1 ? commands.GetRange(1, commands.Count - 1).ToArray() : null;
-//				method.SafeInvoke(args);
-//			}
-//			else
-//			{
-//				Debug.Log("Invalid input: " + key);
-//			}
-
-
-
-
-			/*
-			var inputVal = commands.Length >= 2 ? commands[1] : null;
-
-			if (commands.Length == 1)
-			{
-				Action<string[]> method;
-				if (_methodCollection.TryGetValue(key, out method))
-				{
-					method.SafeInvoke(null);
-				}
-				else
-				{
-					Debug.Log("Invalid input: " + key);
-				}
-			}
-			else if (commands.Length == 2)
-			{
-				Variable variable;
-				Action<string[]> method;
-				if (_variableCollection.TryGetValue(key, out variable))
-				{
-					var varType = variable.valueType;
-
-					int intVal;
-					float floatVal;
-					bool boolVal;
-
-					if (varType == typeof(int) && int.TryParse(inputVal, out intVal))
-					{
-						variable.value = intVal;
-					}
-					else if (varType == typeof(float) && float.TryParse(inputVal, out floatVal))
-					{
-						variable.value = floatVal;
-					}
-					else if (varType == typeof(bool) && bool.TryParse(inputVal, out boolVal))
-					{
-						variable.value = boolVal;
-					}
-					else if (varType == typeof(string))
-					{
-						variable.value = inputVal;
-					}
-					else
-					{
-						Debug.Log("Invalid input: " + inputVal);
-					}
-				}
-				else if(_methodCollection.TryGetValue(key, out method))
-				{
-					string[] inputArr = commands.ToList().GetRange(1, commands.Length - 1).ToArray();
-					method.SafeInvoke(inputArr);
-				}
-//				else
-//				{
-//					Debug.Log("Unknown variable");
-//				}
-			}
-			else if (commands.Length >= 3)
-			{
-				var method = commands[2];
-
-				if (key == Method.BIND)
-				{
-					try
-					{
-						var keyCode = (KeyCode)Enum.Parse(typeof(KeyCode), inputVal);
-						if (keyCode != KeyCode.None && Enum.IsDefined(typeof(KeyCode), keyCode))
-						{
-							Debug.Log("KeyCode is: " + keyCode);
-							if (_methodCollection.ContainsKey(method))
-							{
-								_keyBindings[keyCode] = method;
-								_isDirty = true;
-								Debug.Log("Bound keycode: " + keyCode + " to method: " + method);
-							}
-							else
-							{
-								Debug.Log("Invalid method: " + method);
-							}
-						}
-						else
-						{
-							Debug.Log("Invalid key: " + inputVal);
-						}
-					}
-					catch
-					{
-						Debug.Log("Invalid key: " + inputVal);
-					}
-				}
-			}*/
-		}
-
-
 		[ConsoleMethod(Method.BIND)]
 		public static void BindKey(string key, string command)
 		{
@@ -596,10 +504,8 @@ namespace Wemju.Console
 				var keyCode = (KeyCode)Enum.Parse(typeof(KeyCode), key);
 				if (keyCode != KeyCode.None && Enum.IsDefined(typeof(KeyCode), keyCode))
 				{
-					//Debug.Log("KeyCode is: " + keyCode);
 					_keyBindings[keyCode] = command;
 					_isDirty = true;
-					//Debug.Log("Bound keycode: " + keyCode + " to command: " + command);
 
 //					if (_newMethodCollection.ContainsKey(method))
 //					{
@@ -634,74 +540,62 @@ namespace Wemju.Console
 					if (Core.GetKeyDown(binding.Key))
 					{
 						InvokeNewStyle(binding.Value);
-//						MethodInfo method;
-//						if (_newMethodCollection.TryGetValue(binding.Value, out method))
-//						{
-//							method.Invoke(null, null);
-//						}
 					}
 				}
 			}
 		}
 
 		[ConsoleMethod(Method.GET)]
-		public static void GetVariable(params string[] input)
+		public static void GetVariable(string key)
 		{
-			if (input == null || input.Length != 1)
-			{
-				Debug.Log("Invalid input");
-				return;
-			}
-
-			var variable = input[0];
-
-
-//			Variable var;
-//			if (_variableCollection.TryGetValue(variable, out var))
-//			{
-//				Debug.Log("Found variable: " + variable + " : " + var.value);
-//			}
-//			else
-//			{
-//				Debug.Log("Unable to find variable " + variable);
-//			}
-//			BindingFlags bindFlags = BindingFlags.Instance | BindingFlags.NonPublic;
-//			var info = typeof(Settings).GetField(variable, bindFlags);
-//			if (info != null)
-//			{
-//				Debug.Log("Found variable: " + variable + " : " + info);
-//				//var ctrl = info.GetValue(_) as Controller;
-//			}
-//			else
-//			{
-//				Debug.Log("Failed to find variable: " + variable);
-//			}
-		}
-
-		[CVar("test_one", 1)]
-		private static int _testOne = 20;
-
-		[ConsoleMethod(Method.SET)]
-		private static void SetVariable(string[] input)
-		{
-			if (input == null || input.Length != 2)
-			{
-				Debug.Log("Invalid input");
-				return;
-			}
-
-			var variable = input[0];
-			var value = input[1];
-
 			Variable var;
-			if (_variableCollection.TryGetValue(variable, out var))
+			if (_variableCollection.TryGetValue(key, out var))
 			{
-				var.value = value;
-				Debug.Log("Set variable to " + value);
+				ConsoleHelper.AddLogToHistory(key + " : " + var.value + " (default: " + var.defaultValue + ")");
 			}
 			else
 			{
-				Debug.Log("Unable to find variable " + variable);
+				ConsoleHelper.AddLogToHistory("\"" + key + "\" not found." );
+			}
+		}
+
+		/*[Cvar("test_one", 1)]
+		public static int _testOne = 20;
+
+		[Cvar("test_two", 2)]
+		public static int _testTwo = 22;
+
+		[Cvar("test_three", 3)]
+		public static int _testThree = 23; // TODO: This value is not used, figure out a way to get the default value from here instead of in the attribute
+
+		[CvarOnChange("test_three")]
+		public static void TestThreeOnChange(int test)
+		{
+			Debug.LogWarning("Test Three: " + test);
+		}*/
+
+		[ConsoleMethod(Method.SET)]
+		public static void SetVariable(string key, string value)
+		{
+			Variable var;
+			if (_variableCollection.TryGetValue(key, out var))
+			{
+				object parsedVal;
+				if (ConvertFromString(value, var.valueType, out parsedVal))
+				{
+					var.value = parsedVal;
+					ConsoleHelper.AddLogToHistory("Set \"" + key + "\" to " + value);
+					_isDirty = true;
+
+					if (_cfgAutoSave && !_isLoadingConfig)
+					{
+						StartSaveConfig();
+					}
+				}
+			}
+			else
+			{
+				ConsoleHelper.AddLogToHistory("\"" + key + "\" not found." );
 			}
 		}
 	}
@@ -715,21 +609,35 @@ namespace Wemju.Console
 			this.command = command;
 		}
 	}
-
-	[AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
-	public class CVar : Attribute
+	[AttributeUsage(AttributeTargets.Method)]
+	public class CvarOnChange : Attribute
 	{
-		public CVar(string command, object defaultValue)
+		public string command { get; private set; }
+		public CvarOnChange(string command)
 		{
-
+			this.command = command;
 		}
-		//...
 	}
 
+	[AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
+	public class Cvar : Attribute
+	{
+		public string command { get; private set; }
+		public object defaultValue { get; private set; }
+		//public Type type { get; private set; }
 
+		public Cvar(string command, object defaultValue)
+		{
+			this.command = command;
+			this.defaultValue = defaultValue;
+			//type = defaultValue.GetType();
+		}
+	}
 
 	public static class Command
 	{
+		public const string CFG_AUTO_SAVE = "cfg_auto_save";
+
 		public const string SETTINGS_NAME = "set_name";
 		public const string SETTINGS_MAXFPS = "set_maxfps";
 		public const string SETTINGS_SENSITIVITY = "set_sensitivity";

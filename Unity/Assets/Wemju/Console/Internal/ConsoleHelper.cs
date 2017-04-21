@@ -221,7 +221,6 @@ public class ConsoleHelper : MonoBehaviour
 			_singleInputField.text = string.Empty;
 			_expandedInputField.text = string.Empty;
 
-			IngameConsole.ExecuteCommand(val);
 			IngameConsole.InvokeNewStyle(val);
 			_commandLogs.Add(val);
 			_lastCommandIndex = _commandLogs.Count;
@@ -393,7 +392,21 @@ public class ConsoleHelper : MonoBehaviour
 	public void CheckSuggestions(string input)
 	{
 		//_currentSuggestion = -1;
-		_suggestions = FindSuggestions(input).ToList();
+		if (input.StartsWith(Method.SET) || input.StartsWith(Method.GET))
+		{
+			var prefix = input.Split(' ')[0];
+			var withoutPrefix = input.Remove(0, prefix.Length).TrimStart();
+			_suggestions = FindVariableSuggestions(withoutPrefix).ToList();
+			for (int i = 0; i < _suggestions.Count; i++)
+			{
+				_suggestions[i] = prefix + " " + _suggestions[i];
+			}
+		}
+		else
+		{
+			_suggestions = FindSuggestions(input).ToList();
+		}
+
 		_suggestionLabel.text = string.Join("\r\n", _suggestions.ToArray());
 	}
 
@@ -401,9 +414,14 @@ public class ConsoleHelper : MonoBehaviour
 
 	[SerializeField] private Text _suggestionLabel = null;
 
-	private IEnumerable<string> FindSuggestions(string message)
+	private IEnumerable<string> FindSuggestions(string prefix)
 	{
-		return IngameConsole.GetAllMethods().ToList().FindAll(x => x.StartsWith(message));
+		return IngameConsole.GetAllMethods().ToList().FindAll(x => x.StartsWith(prefix));
+	}
+
+	private IEnumerable<string> FindVariableSuggestions(string prefix)
+	{
+		return IngameConsole.GetAllVariables().ToList().FindAll(x => x.StartsWith(prefix));
 	}
 
 /*

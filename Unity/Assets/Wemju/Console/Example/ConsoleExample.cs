@@ -35,7 +35,7 @@ namespace Wemju.Console.Example
 		}
 
 		[ConsoleMethod(Method.SERVER_CONNECT)]
-		public void Connect()
+		public static void Connect()
 		{
 			Debug.Log("Connect");
 		}
