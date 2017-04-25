@@ -13,14 +13,31 @@ namespace Wemju.Console
 {
 	public static class IngameConsole
 	{
-		static IngameConsole()
+		public static void Initialize()
 		{
+			var cfg = Resources.Load<TextAsset>(DEFAULT_CONFIG_FILENAME);
+			if (cfg == null)
+			{
+				Debug.LogWarning("Unable to find default config");
+			}
+			else
+			{
+				_defaultConfig = cfg.text.Split(new[] {Environment.NewLine}, StringSplitOptions.None);
+			}
 			LoadAllMethods();
 			StartLoadConfig();
 		}
 
+		static IngameConsole()
+		{
+
+		}
+
 		private static void LoadAllMethods()
 		{
+			_newMethodCollection.Clear();
+			_variableCollection.Clear();
+
 			var type = typeof(IngameConsole);
 			var assembly = Assembly.GetAssembly(type);
 			var allTypes = assembly.GetTypes();
@@ -86,7 +103,7 @@ namespace Wemju.Console
 		private const char SPLIT_INPUT_CHARACTER = ' ';
 		public static void InvokeNewStyle(string input)
 		{
-			ConsoleHelper.AddLogToHistory(">" + input);
+			//ConsoleHelper.AddLogToHistory(">" + input);
 			var commands = new List<string>(input.Split(SPLIT_INPUT_CHARACTER));
 
 			if (commands.Count == 0)
@@ -397,6 +414,50 @@ namespace Wemju.Console
 			_cfgAutoSave = state;
 		}
 
+		[Cvar("debug_all_input", false)]
+		public static bool _debugAllInput = false;
+
+		[CvarOnChange("debug_all_input")]
+		public static void DebugAllInputOnChange(bool state)
+		{
+			_debugAllInput = state;
+		}
+
+		[ConsoleMethod(Method.BINDLIST)]
+		public static void BindList()
+		{
+			foreach (var binding in _keyBindings)
+			{
+				ConsoleHelper.AddLogToHistory(binding.Key + ": " + binding.Value);
+			}
+		}
+
+		[ConsoleMethod(Method.UNBIND)]
+		public static void Unbind(string key)
+		{
+			var keyCode = (KeyCode)Enum.Parse(typeof(KeyCode), key);
+			if (keyCode != KeyCode.None && Enum.IsDefined(typeof(KeyCode), keyCode))
+			{
+				if (_keyBindings.Remove(keyCode))
+				{
+					ConsoleHelper.AddLogToHistory("Unbound \"" + keyCode.ToString() + "\"");
+
+					if (_cfgAutoSave)
+					{
+						StartSaveConfig();
+					}
+				}
+				else
+				{
+					ConsoleHelper.AddLogToHistory("Key \"" + keyCode.ToString() + "\" was not bound");
+				}
+			}
+			else
+			{
+				ConsoleHelper.AddLogToHistory("Invalid keyCode \"" + key + "\"");
+			}
+		}
+
 		[ConsoleMethod(Method.CFG_PATH)]
 		public static void EchoConfigPath()
 		{
@@ -422,25 +483,29 @@ namespace Wemju.Console
 
 			lock (_keyBindings)
 			{
-				using (var writer = new StreamWriter(GetPathToConfig))
-				{
-					foreach (var binding in _keyBindings)
-					{
-						writer.WriteLine(Method.BIND + " " + binding.Key.ToString() + " " + binding.Value);
-					}
-
-					foreach (var variable in _variableCollection)
-					{
-						writer.WriteLine(Method.SET + " " + variable.Key + " " + variable.Value.value);
-					}
-				}
-
-				_isDirty = false;
+				WriteCurrentConfigToPath(GetPathToConfig);
 			}
+			_isDirty = false;
 
 			if (!_cfgAutoSave)
 			{
 				ConsoleHelper.AddLogToHistory("Saved config");
+			}
+		}
+
+		private static void WriteCurrentConfigToPath(string path)
+		{
+			using (var writer = new StreamWriter(path))
+			{
+				foreach (var binding in _keyBindings)
+				{
+					writer.WriteLine(Method.BIND + " " + binding.Key.ToString() + " \"" + binding.Value + "\"");
+				}
+
+				foreach (var variable in _variableCollection)
+				{
+					writer.WriteLine(Method.SET + " " + variable.Key + " " + variable.Value.value);
+				}
 			}
 		}
 
@@ -475,22 +540,67 @@ namespace Wemju.Console
 			}
 			else
 			{
-				SetDefaultBindings();
+				SetDefaultConfig();
 			}
+
 			_isLoadingConfig = false;
 		}
 
-		private static void SetDefaultBindings()
+#if UNITY_EDITOR
+		[ConsoleMethod("+cfg_write_default")]
+		public static void WriteDefaultConfig()
 		{
-			Debug.Log("SetDefaultBindings");
-			lock (_keyBindings)
+			WriteCurrentConfigToPath(GetDefaultConfigPath());
+		}
+
+		private static string GetDefaultConfigPath()
+		{
+			return string.Format("{0}{1}Assets{1}Wemju{1}Console{1}Internal{1}Resources{1}{2}",
+				Environment.CurrentDirectory, Path.DirectorySeparatorChar, DEFAULT_CONFIG_FILENAME + DEFAULT_CONFIG_EXTENSION);
+		}
+#endif
+
+		private const string DEFAULT_CONFIG_FILENAME = "defaultConfig";
+		private const string DEFAULT_CONFIG_EXTENSION = ".txt";
+
+		private static string[] _defaultConfig = null;
+
+		[ConsoleMethod("+cfg_reset_default")]
+		public static void SetDefaultConfig()
+		{
+			Debug.Log("SetDefaultConfig");
+
+			var defaultConfig = _defaultConfig;
+
+			//var path =  GetDefaultConfigPath();
+//			if (File.Exists(path))
+//			{
+//
+//				defaultConfig = File.ReadAllLines(GetDefaultConfigPath());
+//			}
+//			else
+//			{
+//			}
+
+
+//			var defaultConfig = new string[]
+//			{
+//			};
+
+			_keyBindings.Clear();
+
+			foreach (var s in defaultConfig)
 			{
-				_keyBindings = new Dictionary<KeyCode, string>
-				{
-					{KeyCode.Mouse0, Method.ACTION_SHOOT},
-					{KeyCode.BackQuote, Method.TOGGLE_CONSOLE_EXPANDED},
-				};
+				InvokeNewStyle(s);
 			}
+//			lock (_keyBindings)
+//			{
+//				_keyBindings = new Dictionary<KeyCode, string>
+//				{
+//					{KeyCode.Mouse0, Method.ACTION_SHOOT},
+//					{KeyCode.F1, Method.TOGGLE_CONSOLE_EXPANDED},
+//				};
+//			}
 
 			_isDirty = true;
 			StartSaveConfig();
@@ -504,8 +614,14 @@ namespace Wemju.Console
 				var keyCode = (KeyCode)Enum.Parse(typeof(KeyCode), key);
 				if (keyCode != KeyCode.None && Enum.IsDefined(typeof(KeyCode), keyCode))
 				{
+					command = command.Trim('\"');
 					_keyBindings[keyCode] = command;
 					_isDirty = true;
+
+					if (_cfgAutoSave && !_isLoadingConfig)
+					{
+						StartSaveConfig();
+					}
 
 //					if (_newMethodCollection.ContainsKey(method))
 //					{
@@ -531,15 +647,64 @@ namespace Wemju.Console
 
 		private static Dictionary<KeyCode, string> _keyBindings = new Dictionary<KeyCode, string>();
 
+		public enum KeyPressState
+		{
+			None,
+			Down,
+			Up,
+			Held
+		}
+
+		public static KeyPressState keyState { get; private set; }
+
 		public static void CheckInputPressed()
 		{
 			lock (_keyBindings)
 			{
 				foreach (var binding in _keyBindings)
 				{
-					if (Core.GetKeyDown(binding.Key))
+					bool getKeyDown = Core.GetKeyDown(binding.Key);
+					bool getKeyUp = !getKeyDown && Core.GetKeyUp(binding.Key);
+					bool getKey = !getKeyDown && !getKeyUp && Core.GetKey(binding.Key);
+
+					if(getKeyDown) {keyState = KeyPressState.Down;}
+					else if(getKeyUp) {keyState = KeyPressState.Up;}
+					else if(getKey) {keyState = KeyPressState.Held;}
+					else {keyState = KeyPressState.None;}
+
+					if (keyState != KeyPressState.None)
 					{
 						InvokeNewStyle(binding.Value);
+					}
+				}
+
+				DebugAllKeys();
+			}
+		}
+
+		private static KeyCode[] _allKeyCodes = null;
+		private static void DebugAllKeys()
+		{
+			if (_debugAllInput)
+			{
+				if (_allKeyCodes == null)
+				{
+					_allKeyCodes = Enum.GetValues(typeof(KeyCode)) as KeyCode[];
+				}
+
+				foreach (var code in _allKeyCodes)
+				{
+					if (Input.GetKeyDown(code))
+					{
+						ConsoleHelper.AddLogToHistory("GetKeyDown: " + code);
+					}
+					/*if (Input.GetKey(code))
+					{
+						ConsoleHelper.AddLogToHistory("GetKey: " + code);
+					}*/
+					if (Input.GetKeyUp(code))
+					{
+						ConsoleHelper.AddLogToHistory("GetKeyUp: " + code);
 					}
 				}
 			}
@@ -580,16 +745,23 @@ namespace Wemju.Console
 			Variable var;
 			if (_variableCollection.TryGetValue(key, out var))
 			{
-				object parsedVal;
-				if (ConvertFromString(value, var.valueType, out parsedVal))
+				if (string.IsNullOrEmpty(value))
 				{
-					var.value = parsedVal;
-					ConsoleHelper.AddLogToHistory("Set \"" + key + "\" to " + value);
-					_isDirty = true;
-
-					if (_cfgAutoSave && !_isLoadingConfig)
+					GetVariable(key);
+				}
+				else
+				{
+					object parsedVal;
+					if (ConvertFromString(value, var.valueType, out parsedVal))
 					{
-						StartSaveConfig();
+						var.value = parsedVal;
+						ConsoleHelper.AddLogToHistory("Set \"" + key + "\" to " + value);
+						_isDirty = true;
+
+						if (_cfgAutoSave && !_isLoadingConfig)
+						{
+							StartSaveConfig();
+						}
 					}
 				}
 			}
@@ -665,6 +837,7 @@ namespace Wemju.Console
 		public const string CFG_PATH = "+cfg_path";
 		public const string BIND = "+bind";
 		public const string UNBIND = "+unbind";
+		public const string BINDLIST = "+bindlist";
 		public const string ACTION_SHOOT = "+shoot";
 		public const string MOVE_FORWARD = "+forward";
 		public const string MOVE_BACKWARD = "+backward";

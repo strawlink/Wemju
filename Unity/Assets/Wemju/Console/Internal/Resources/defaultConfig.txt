@@ -1,0 +1,11 @@
++bind F1 "+toggle_console_expanded"
++bind JoystickButton10 "+stick_left_top"
++bind JoystickButton8 "+stick_left_bottom"
++bind JoystickButton11 "+stick_right_top"
++bind JoystickButton12 "+stick_right_bottom"
++bind Q "+stick_left_top"
++bind E "+stick_right_top"
++bind A "+stick_left_bottom"
++bind D "+stick_right_bottom"
++set cfg_auto_save False
++set debug_all_input False

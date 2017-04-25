@@ -19,6 +19,7 @@ public class ConsoleHelper : MonoBehaviour
 		{
 			if (_instance == null)
 			{
+				Debug.Log("Load");
 				var go = Resources.Load<GameObject>("ConsoleCanvas");
 				go = Instantiate(go);
 				_instance = go.GetComponent<ConsoleHelper>();
@@ -36,6 +37,7 @@ public class ConsoleHelper : MonoBehaviour
 	{
 		ChangeState(VisibilityState.Hidden, true);
 		SetRedirectDebugLogs(true);
+		DontDestroyOnLoad(gameObject);
 
 		//IngameConsole.RegisterMethod(Method.TOGGLE_CONSOLE, ShowSingle);
 		//IngameConsole.RegisterMethod(Method.TOGGLE_CONSOLE_EXPANDED, ShowExpanded);
@@ -106,7 +108,7 @@ public class ConsoleHelper : MonoBehaviour
 			message = color + message + "</color>";
 		}
 
-		AddLogToHistory(message);
+		AddLogToHistory(message.Substring(0, 500));
 	}
 
 	private static string GetColorForLogType(LogType type)
@@ -157,7 +159,10 @@ public class ConsoleHelper : MonoBehaviour
 	[ConsoleMethod(Method.TOGGLE_CONSOLE_EXPANDED)]
 	public static void ShowExpanded()
 	{
-		Instance.ChangeState(VisibilityState.Expanded);
+		if (IngameConsole.keyState == IngameConsole.KeyPressState.Down)
+		{
+			Instance.ChangeState(VisibilityState.Expanded);
+		}
 	}
 
 //	public void ShowSingle()
@@ -221,6 +226,7 @@ public class ConsoleHelper : MonoBehaviour
 			_singleInputField.text = string.Empty;
 			_expandedInputField.text = string.Empty;
 
+			AddLogToHistory(">" + val);
 			IngameConsole.InvokeNewStyle(val);
 			_commandLogs.Add(val);
 			_lastCommandIndex = _commandLogs.Count;
@@ -263,7 +269,7 @@ public class ConsoleHelper : MonoBehaviour
 					c = _suggestions[0][i];
 					for (int j = 0; j < _suggestions.Count; j++)
 					{
-						if (_suggestions[j].Length < i || _suggestions[j][i] != c)
+						if (_suggestions[j].Length <= i || _suggestions[j][i] != c)
 						{
 							index = i;
 							break;
@@ -387,6 +393,11 @@ public class ConsoleHelper : MonoBehaviour
 	{
 		_logHistory.Add(log);
 		_updateLogWindow = true;
+
+		if (_logHistory.Count > 100)
+		{
+			_logHistory = _logHistory.GetRange(_logHistory.Count - 100, 100);
+		}
 	}
 
 	public void CheckSuggestions(string input)
