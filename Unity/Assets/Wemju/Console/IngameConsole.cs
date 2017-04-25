@@ -69,8 +69,7 @@ namespace Wemju.Console
 				var attr = info.GetCustomAttributes(typeof(Cvar), false)[0];
 				var cvarAttr = ((Cvar) attr);
 
-				// TODO: This style doesn't really make sense, we want to modify the direct variable instead of wrapping it
-				Variable newVar = new Variable(cvarAttr.defaultValue);
+				var newVar = new Variable(info);
 				_variableCollection.Add(cvarAttr.command, newVar);
 			}
 
@@ -82,7 +81,7 @@ namespace Wemju.Console
 					continue;
 				}
 
-				var attr = info.GetCustomAttributes(typeof(CvarOnChange), false)[0];
+				var attr = info.GetCustomAttributes(typeof(CvarOnChange), false)[0]; // TODO: Make sure this works with multiple methods
 				var cName = ((CvarOnChange) attr).command;
 
 				Variable newVar;
@@ -281,65 +280,29 @@ namespace Wemju.Console
 
 		public class Variable
 		{
-			public Variable(object defaultValue, Action<object> onChange = null)
+			public Variable(FieldInfo fieldInfo, Action<object> onChange = null)
 			{
-				this.defaultValue = defaultValue;
+				this.fieldInfo = fieldInfo;
+				this.defaultValue = fieldInfo.GetValue(null);
 				valueType = defaultValue.GetType();
-				_value = defaultValue;
 				OnChange = onChange;
 			}
 
+			public readonly FieldInfo fieldInfo;
 			public readonly object defaultValue;
 			public readonly Type valueType;
-			private object _value;
 			public event Action<object> OnChange;
 
 			public object value
 			{
-				get { return _value; }
+				get { return fieldInfo.GetValue(null); }
 				set
 				{
-					_value = value;
-					OnChange.SafeInvoke(_value);
+					fieldInfo.SetValue(null, value);
+					OnChange.SafeInvoke(value);
 				}
 			}
 		}
-
-		/*public class Variable<T>
-		{
-			public Variable(T defaultValue)
-			{
-				this.defaultValue = defaultValue;
-				valueType = defaultValue.GetType();
-				_value = defaultValue;
-				//OnChange = onChange;
-			}
-
-			public readonly T defaultValue;
-			public readonly Type valueType;
-			private T _value;
-			public event Action<T> OnChange;
-
-			public T value
-			{
-				get { return _value; }
-				set
-				{
-					_value = value;
-					OnChange.SafeInvoke(_value);
-				}
-			}
-
-			public void Set(T val)
-			{
-				this.value = val;
-			}
-
-			public T Get()
-			{
-				return value;
-			}
-		}*/
 
 		private static string GetPathToConfig
 		{
@@ -350,52 +313,6 @@ namespace Wemju.Console
 
 		private static Dictionary<string, Variable> _variableCollection = new Dictionary<string, Variable>();
 
-//		public static Variable GetVar(string key)
-//		{
-//			Variable obj;
-//			if (_variableCollection.TryGetValue(key, out obj))
-//			{
-//				return obj;
-//			}
-//
-//			return null;
-//		}
-//		public static T GetVar<T>(string key, T defaultValue = default(T))
-//		{
-//			Variable obj;
-//			if (_variableCollection.TryGetValue(key, out obj))
-//			{
-//				return (T) obj.value;
-//			}
-//
-//			return defaultValue;
-//		}
-//
-//		public static T GetDefaultVar<T>(string key)
-//		{
-//			Variable obj;
-//			if (_variableCollection.TryGetValue(key, out obj))
-//			{
-//				return (T) obj.defaultValue;
-//			}
-//
-//			return default(T);
-//		}
-
-//		public static void SetVar<T>(string name, T val)
-//		{
-//			_variableCollection[name].value = val;
-//
-//			_isDirty = true;
-//
-//			SaveConfig();
-//		}
-
-//		public static void RegisterVar<T>(string name, T defaultValue, Action<object> onChange = null)
-//		{
-//			_variableCollection[name] = new Variable(defaultValue, onChange);
-//		}
-
 		public static IEnumerable<string> GetAllMethods()
 		{
 			return _newMethodCollection.Keys;
@@ -405,23 +322,30 @@ namespace Wemju.Console
 			return _variableCollection.Keys;
 		}
 
-		[Cvar(Command.CFG_AUTO_SAVE, false)]
+		[Cvar(Command.CFG_AUTO_SAVE)]
 		public static bool _cfgAutoSave = false;
 
 		[CvarOnChange(Command.CFG_AUTO_SAVE)]
 		public static void CfgAutoSaveOnChange(bool state)
 		{
-			_cfgAutoSave = state;
+			Debug.Log("cfg_auto_save was changed to: " + state);
 		}
 
-		[Cvar("debug_all_input", false)]
-		public static bool _debugAllInput = false;
+		[Cvar("test_1")] public static string test_1 = "hello";
+		[Cvar("test_2")] public static string test_2 = "world";
 
-		[CvarOnChange("debug_all_input")]
-		public static void DebugAllInputOnChange(bool state)
+		[CvarOnChange("test_1")]
+		[CvarOnChange("test_2")]
+		public static void TestOnChange(string val)
 		{
-			_debugAllInput = state;
+			Debug.Log("T1: " + test_1);
+			Debug.Log("T2: " + test_2);
+
+			Debug.Log("val: " + val);
 		}
+
+		[Cvar("debug_all_input")]
+		public static bool _debugAllInput = false;
 
 		[ConsoleMethod(Method.BINDLIST)]
 		public static void BindList()
@@ -502,6 +426,7 @@ namespace Wemju.Console
 					writer.WriteLine(Method.BIND + " " + binding.Key.ToString() + " \"" + binding.Value + "\"");
 				}
 
+				// TODO: Remove the need for "+set" prefix
 				foreach (var variable in _variableCollection)
 				{
 					writer.WriteLine(Method.SET + " " + variable.Key + " " + variable.Value.value);
@@ -739,6 +664,8 @@ namespace Wemju.Console
 			Debug.LogWarning("Test Three: " + test);
 		}*/
 
+
+		// TODO: remove the need for "+set"
 		[ConsoleMethod(Method.SET)]
 		public static void SetVariable(string key, string value)
 		{
@@ -781,7 +708,7 @@ namespace Wemju.Console
 			this.command = command;
 		}
 	}
-	[AttributeUsage(AttributeTargets.Method)]
+	[AttributeUsage(AttributeTargets.Method, AllowMultiple = true)]
 	public class CvarOnChange : Attribute
 	{
 		public string command { get; private set; }
@@ -795,14 +722,10 @@ namespace Wemju.Console
 	public class Cvar : Attribute
 	{
 		public string command { get; private set; }
-		public object defaultValue { get; private set; }
-		//public Type type { get; private set; }
 
-		public Cvar(string command, object defaultValue)
+		public Cvar(string command)
 		{
 			this.command = command;
-			this.defaultValue = defaultValue;
-			//type = defaultValue.GetType();
 		}
 	}
 
